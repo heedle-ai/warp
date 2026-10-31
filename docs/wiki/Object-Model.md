@@ -3,6 +3,7 @@ warp's objects are Git's objects. Each warp call is one Git plumbing command, ru
 | warp call | Git command | Notes |
 |---|---|---|
 | `PutBlob(data)` | `git hash-object -w --stdin` | Returns Git's ID for the content |
+| `HashBlob(data)` | `git hash-object --stdin` | The ID `data` would have, without writing it or needing a store |
 | `Blob(id)` | `git cat-file blob` | `ErrNotFound` if there's no such blob |
 | `PutTree(entries)` | `git mktree -z` | Any input order; Git sorts. warp rejects empty, `.`, `..`, `/`-containing and duplicate names first, because `mktree` would accept duplicates and produce a tree `git fsck` flags |
 | `Tree(id)` | `git ls-tree -z` | Entries in Git's order |

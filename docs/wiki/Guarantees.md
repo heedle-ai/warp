@@ -2,7 +2,7 @@ Each guarantee has a test in `warp_test.go`.
 
 | Guarantee | Test |
 |---|---|
-| Equal content gives equal IDs, different content gives different IDs, and the ID is Git's own (`ce013625…` for `hello\n`) | `TestBlob_ContentAddressed` |
+| Equal content gives equal IDs, different content gives different IDs, the ID is Git's own (`ce013625…` for `hello\n`), and `HashBlob` agrees with `PutBlob` | `TestBlob_ContentAddressed` |
 | Tree IDs don't depend on entry order; invalid or duplicate names are rejected | `TestTree_RoundTripAndValidation` |
 | The same commit spec always gives the same commit ID; trailers read back the same through warp and through `git log` | `TestCommit_DeterministicWithTrailers` |
 | Create-only refs, compare-and-swap, stale writes rejected with `ErrConflict`, invalid ref names rejected | `TestAdvance_CompareAndSwap` |

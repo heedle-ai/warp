@@ -99,6 +99,16 @@ func (s *Store) PutBlob(ctx context.Context, data []byte) (ID, error) {
 	return s.id(s.git(ctx, data, "hash-object", "-w", "--stdin"))
 }
 
+// HashBlob returns the ID data would have as a blob, without writing it
+// or needing a store (git hash-object --stdin).
+func HashBlob(ctx context.Context, data []byte) (ID, error) {
+	out, err := gitCmd(ctx, "", data, []string{"hash-object", "--stdin"})
+	if err != nil {
+		return "", err
+	}
+	return ID(strings.TrimSpace(string(out))), nil
+}
+
 // Blob returns the contents of a blob (git cat-file blob).
 func (s *Store) Blob(ctx context.Context, id ID) ([]byte, error) {
 	if err := s.exists(ctx, id, KindBlob); err != nil {

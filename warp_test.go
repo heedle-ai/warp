@@ -60,6 +60,9 @@ func TestBlob_ContentAddressed(t *testing.T) {
 	if a != "ce013625030ba8dba906f756967f9e9ca394464a" {
 		t.Errorf("id = %s, want Git's ce01362…", a)
 	}
+	if h := must(warp.HashBlob(ctx, []byte("hello\n"))); h != a {
+		t.Errorf("HashBlob = %s, want %s (same as PutBlob)", h, a)
+	}
 	if got := string(must(s.Blob(ctx, a))); got != "hello\n" {
 		t.Errorf("read back %q", got)
 	}
