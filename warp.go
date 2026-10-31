@@ -215,6 +215,13 @@ func (s *Store) Commit(ctx context.Context, c CommitSpec) (ID, error) {
 	if !strings.HasSuffix(msg, "\n") {
 		msg += "\n"
 	}
+	// git treats a "---" line as the end of the message for trailers, and
+	// git log then can't see trailers placed before it: reject it.
+	for _, line := range strings.Split(msg, "\n") {
+		if strings.HasPrefix(line, "---") {
+			return "", fmt.Errorf("%w: message has a line starting with ---", ErrInvalid)
+		}
+	}
 	// A message whose last paragraph parses as trailers would blur into
 	// the real trailers on read; ask git whether it does.
 	if parsed, err := s.git(ctx, []byte(msg), "interpret-trailers", "--parse"); err != nil {
@@ -264,7 +271,7 @@ func (s *Store) Resolve(ctx context.Context, ref string) (id ID, ok bool, err er
 	}
 	id = ID(strings.TrimSpace(string(out)))
 	if err := s.exists(ctx, id, "commit"); err != nil {
-		return "", false, fmt.Errorf("warp: ref %s points to a non-commit %s", ref, id)
+		return "", false, fmt.Errorf("%w: ref %s points to a non-commit %s", ErrInvalid, ref, id)
 	}
 	return id, true, nil
 }
@@ -346,11 +353,14 @@ func (s *Store) FindByTrailer(ctx context.Context, from ID, key, value string) (
 	if err := s.exists(ctx, from, "commit"); err != nil {
 		return "", false, err
 	}
-	out, err := s.git(ctx, nil, "log", "--format=%H%x00%(trailers:only,unfold,separator=%x00)%x01", string(from))
+	// git filters candidates natively (fixed-string grep over the message);
+	// each candidate's trailers are then compared exactly.
+	want := key + ": " + value
+	out, err := s.git(ctx, nil, "log", "-F", "--grep", want,
+		"--format=%H%x00%(trailers:only,unfold,separator=%x00)%x01", string(from))
 	if err != nil {
 		return "", false, err
 	}
-	want := key + ": " + value
 	for _, rec := range strings.Split(string(out), "\x01") {
 		f := strings.Split(strings.TrimLeft(rec, "\n"), "\x00")
 		for _, t := range f[1:] {

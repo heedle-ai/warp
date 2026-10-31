@@ -376,3 +376,32 @@ func TestFindByTrailer_ExactMatchOnly(t *testing.T) {
 		t.Errorf("injected key: err = %v, want ErrInvalid", err)
 	}
 }
+
+func TestCommit_RejectsDashLinesThatHideTrailers(t *testing.T) {
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	_, err := s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "subj\n\nbody\n---\ntail", Author: author,
+		Trailers: []warp.Trailer{{Key: "Run", Value: "r1"}}})
+	if !errors.Is(err, warp.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestResolve_RefToNonCommitIsInvalid(t *testing.T) {
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	gitOut(t, s, "update-ref", "refs/broken", string(tree))
+	if _, _, err := s.Resolve(ctx, "refs/broken"); !errors.Is(err, warp.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestFindByTrailer_ValueInBodyIsNotATrailer(t *testing.T) {
+	// --grep also matches the body; only real trailers count.
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	c := must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "subject\n\nmentions Run: r1 in the body\n\nmore text", Author: author}))
+	if _, ok, _ := s.FindByTrailer(ctx, c, "Run", "r1"); ok {
+		t.Error("matched text in the body")
+	}
+}

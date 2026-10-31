@@ -13,7 +13,9 @@ Each guarantee has a test in `warp_test.go`.
 | Ref names are exact: a tag that Git would guess from the name isn't used | `TestResolve_ExactNameNoGuessing` |
 | IDs are full hex names; abbreviations and revision expressions are rejected | `TestIDs_RejectRevisionExpressions` |
 | Trailers read back exactly, duplicates and order included; malformed keys, values and trailer-like messages are rejected | `TestTrailers_ReadBackExactly` |
-| Trailer lookup matches key and value exactly, and rejects injected keys | `TestFindByTrailer_ExactMatchOnly` |
+| Trailer lookup matches key and value exactly, rejects injected keys, and ignores the same text in the message body | `TestFindByTrailer_ExactMatchOnly`, `TestFindByTrailer_ValueInBodyIsNotATrailer` |
+| Messages with a `---` line (which hides trailers from `git log`) are rejected | `TestCommit_RejectsDashLinesThatHideTrailers` |
+| A ref pointing at a non-commit is `ErrInvalid`, not retried | `TestResolve_RefToNonCommitIsInvalid` |
 
 Every `Advance` is a separate `git update-ref` process, so the concurrency test covers separate processes, not just goroutines.
 
@@ -27,3 +29,4 @@ warp writes only through Git's own commands, so it uses Git's own lock files. A 
 - **Undo real-world actions.** Moving a ref back doesn't unsend an email.
 - **Privacy.** Anything you `git push` is readable by whoever can read the remote. Push agent knowledge only to private remotes.
 - **Network filesystems.** Git's locking assumes a local disk.
+- **Stale lock files.** If a process dies while holding a ref's lock, `<ref>.lock` stays behind and every `Advance` on that ref returns `ErrConflict`. Git doesn't remove it automatically, and neither does warp: check no git process is running, then delete the `.lock` file under the store.
