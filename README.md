@@ -19,4 +19,4 @@ are recorded against.
 
 The first backend will be SQLite for refs plus filesystem-backed objects. All
 store I/O happens inside Temporal activities (see
-[shuttle](https://github.com/heddle/shuttle)), never in workflow code.
+[shuttle](https://github.com/heedle-ai/shuttle)), never in workflow code.
