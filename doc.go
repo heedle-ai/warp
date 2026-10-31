@@ -1,4 +1,4 @@
-// Package warp is heddle's content-addressed object store.
+// Package warp is heedle-ai's content-addressed object store.
 //
 // Immutable objects (blobs, trees, commits) are identified by the hash of
 // their type and canonical encoding. Refs are the only mutable state; they

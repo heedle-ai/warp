@@ -1,6 +1,6 @@
 # warp
 
-heddle's Merkle object store. In weaving, the warp is the fixed set of threads
+heedle-ai's Merkle object store. In weaving, the warp is the fixed set of threads
 the weft is woven through. Here it is the immutable history that computations
 are recorded against.
 
