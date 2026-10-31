@@ -40,6 +40,9 @@ why the existing tool can't do it.
   Git's own; warp never computes a hash or writes an object file itself.
 - Commits must be deterministic: always pass an explicit author time, never
   "now", so the same inputs give the same commit ID.
-- Refs are the only mutable state and move only by compare-and-swap.
+- Refs are the only mutable state and move only forward, by compare-and-swap.
+- IDs are full hex names and ref names are exact; never pass user input to
+  git as a revision expression.
+- Every bug gets a regression test that fails on the old code.
 - Nothing in warp may be called from Temporal workflow code directly; shuttle
   calls it from activities.

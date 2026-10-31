@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ID is a Git object name in full hexadecimal form.
+// ID is a Git object name in full lowercase hexadecimal form: 40 digits for
+// SHA-1 repositories, 64 for SHA-256. Abbreviations and revision
+// expressions are rejected.
 type ID string
 
 // Kind is the type of object a tree entry points to.
@@ -31,7 +34,10 @@ type Entry struct {
 }
 
 // Trailer is one "Key: Value" line in a commit message's trailer block,
-// the format read and written by git interpret-trailers.
+// the format read and written by git interpret-trailers. Keys are letters,
+// digits and hyphens, starting with a letter or digit. Values are non-empty,
+// on one line, without leading or trailing whitespace. A trailer reads back
+// exactly as written, in order, duplicates included.
 type Trailer struct {
 	Key, Value string
 }
@@ -46,8 +52,10 @@ type Signature struct {
 // CommitSpec is everything a commit is made of. The same spec always
 // produces the same commit ID.
 type CommitSpec struct {
-	Tree     ID
-	Parents  []ID
+	Tree    ID
+	Parents []ID
+	// Message must not end in a paragraph Git would read as trailers; put
+	// those in Trailers.
 	Message  string
 	Trailers []Trailer
 	// Author is used as both author and committer.
@@ -55,11 +63,15 @@ type CommitSpec struct {
 }
 
 var (
-	// ErrConflict means a ref was not where the caller expected: another
-	// writer moved or created it first. Re-read the ref and try again.
+	// ErrConflict means a ref was not where the caller expected, or another
+	// writer held its lock: re-read the ref and try again. Nothing changed.
 	ErrConflict = errors.New("warp: ref changed concurrently")
 	// ErrNotFound means the object or ref does not exist.
 	ErrNotFound = errors.New("warp: not found")
+	// ErrInvalid means an argument can never be accepted: a malformed ID,
+	// ref, name or trailer, or a ref update that isn't a fast-forward.
+	// Retrying won't help.
+	ErrInvalid = errors.New("warp: invalid argument")
 )
 
 // Store is a bare Git repository driven through the git command line.
@@ -94,11 +106,6 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 // Dir is the repository path, for use with git --git-dir.
 func (s *Store) Dir() string { return s.dir }
 
-// PutBlob stores data and returns its ID (git hash-object -w).
-func (s *Store) PutBlob(ctx context.Context, data []byte) (ID, error) {
-	return s.id(s.git(ctx, data, "hash-object", "-w", "--stdin"))
-}
-
 // HashBlob returns the ID data would have as a blob, without writing it
 // or needing a store (git hash-object --stdin).
 func HashBlob(ctx context.Context, data []byte) (ID, error) {
@@ -109,6 +116,11 @@ func HashBlob(ctx context.Context, data []byte) (ID, error) {
 	return ID(strings.TrimSpace(string(out))), nil
 }
 
+// PutBlob stores data and returns its ID (git hash-object -w).
+func (s *Store) PutBlob(ctx context.Context, data []byte) (ID, error) {
+	return s.id(s.git(ctx, data, "hash-object", "-w", "--stdin"))
+}
+
 // Blob returns the contents of a blob (git cat-file blob).
 func (s *Store) Blob(ctx context.Context, id ID) ([]byte, error) {
 	if err := s.exists(ctx, id, KindBlob); err != nil {
@@ -117,23 +129,35 @@ func (s *Store) Blob(ctx context.Context, id ID) ([]byte, error) {
 	return s.git(ctx, nil, "cat-file", "blob", string(id))
 }
 
+// ValidName reports whether name can be a tree entry: non-empty, not ".",
+// "..", or ".git" in any case, and without "/" or NUL. It does no I/O, so
+// it is safe to call from Temporal workflow code.
+func ValidName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.EqualFold(name, ".git") || strings.ContainsAny(name, "/\x00") {
+		return fmt.Errorf("%w: tree entry name %q", ErrInvalid, name)
+	}
+	return nil
+}
+
 // PutTree stores a tree and returns its ID (git mktree). Entries may be
-// in any order; git sorts them. Names must be unique and must not be
-// empty, ".", "..", or contain "/" or NUL.
+// in any order; git sorts them. Names must pass ValidName and be unique.
 func (s *Store) PutTree(ctx context.Context, entries []Entry) (ID, error) {
 	seen := make(map[string]bool, len(entries))
 	var in bytes.Buffer
 	for _, e := range entries {
-		if err := validName(e.Name); err != nil {
+		if err := ValidName(e.Name); err != nil {
 			return "", err
 		}
 		if seen[e.Name] {
-			return "", fmt.Errorf("warp: duplicate tree entry %q", e.Name)
+			return "", fmt.Errorf("%w: duplicate tree entry %q", ErrInvalid, e.Name)
 		}
 		seen[e.Name] = true
 		mode := map[Kind]string{KindBlob: "100644", KindTree: "040000"}[e.Kind]
 		if mode == "" {
-			return "", fmt.Errorf("warp: entry %q: unknown kind %q", e.Name, e.Kind)
+			return "", fmt.Errorf("%w: entry %q: unknown kind %q", ErrInvalid, e.Name, e.Kind)
+		}
+		if err := validID(e.ID); err != nil {
+			return "", err
 		}
 		fmt.Fprintf(&in, "%s %s %s\t%s\x00", mode, e.Kind, e.ID, e.Name)
 	}
@@ -164,21 +188,45 @@ func (s *Store) Tree(ctx context.Context, id ID) ([]Entry, error) {
 	return entries, nil
 }
 
+var trailerKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+
+func validTrailer(t Trailer) error {
+	if !trailerKey.MatchString(t.Key) || t.Value == "" || strings.TrimSpace(t.Value) != t.Value || strings.ContainsAny(t.Value, "\r\n") {
+		return fmt.Errorf("%w: trailer %q: %q", ErrInvalid, t.Key, t.Value)
+	}
+	return nil
+}
+
 // Commit stores a commit and returns its ID (git commit-tree). Trailers
-// are appended with git interpret-trailers.
+// are appended with git interpret-trailers, keeping duplicates and order.
 func (s *Store) Commit(ctx context.Context, c CommitSpec) (ID, error) {
 	if c.Author.Name == "" || c.Author.Email == "" {
-		return "", errors.New("warp: commit needs an author name and email")
+		return "", fmt.Errorf("%w: commit needs an author name and email", ErrInvalid)
+	}
+	if err := s.exists(ctx, c.Tree, KindTree); err != nil {
+		return "", err
+	}
+	for _, p := range c.Parents {
+		if err := s.exists(ctx, p, "commit"); err != nil {
+			return "", err
+		}
 	}
 	msg := c.Message
 	if !strings.HasSuffix(msg, "\n") {
 		msg += "\n"
 	}
+	// A message whose last paragraph parses as trailers would blur into
+	// the real trailers on read; ask git whether it does.
+	if parsed, err := s.git(ctx, []byte(msg), "interpret-trailers", "--parse"); err != nil {
+		return "", err
+	} else if len(bytes.TrimSpace(parsed)) > 0 {
+		return "", fmt.Errorf("%w: message ends in trailer-like lines; use CommitSpec.Trailers", ErrInvalid)
+	}
 	if len(c.Trailers) > 0 {
-		args := []string{"interpret-trailers"}
+		args := []string{"interpret-trailers", "--if-exists", "add", "--if-missing", "add"}
 		for _, t := range c.Trailers {
-			if t.Key == "" || strings.ContainsAny(t.Key, ": \t\r\n") || strings.ContainsAny(t.Value, "\r\n") {
-				return "", fmt.Errorf("warp: invalid trailer %q: %q", t.Key, t.Value)
+			if err := validTrailer(t); err != nil {
+				return "", err
 			}
 			args = append(args, "--trailer", t.Key+": "+t.Value)
 		}
@@ -188,7 +236,7 @@ func (s *Store) Commit(ctx context.Context, c CommitSpec) (ID, error) {
 		}
 		msg = string(out)
 	}
-	args := []string{"commit-tree", string(c.Tree)}
+	args := []string{"-c", "commit.gpgSign=false", "commit-tree", string(c.Tree)}
 	for _, p := range c.Parents {
 		args = append(args, "-p", string(p))
 	}
@@ -197,51 +245,89 @@ func (s *Store) Commit(ctx context.Context, c CommitSpec) (ID, error) {
 		"GIT_AUTHOR_NAME=" + c.Author.Name, "GIT_AUTHOR_EMAIL=" + c.Author.Email, "GIT_AUTHOR_DATE=" + date,
 		"GIT_COMMITTER_NAME=" + c.Author.Name, "GIT_COMMITTER_EMAIL=" + c.Author.Email, "GIT_COMMITTER_DATE=" + date,
 	}
-	return s.id(gitCmd(ctx, s.dir, []byte(msg), append([]string{"-c", "commit.gpgSign=false"}, args...), env...))
+	return s.id(gitCmd(ctx, s.dir, []byte(msg), args, env...))
 }
 
-// Resolve returns the commit a ref points to (git rev-parse --verify).
-// ok is false if the ref does not exist.
+// Resolve returns the commit a ref points to. The name must match exactly
+// (git show-ref --verify): Git's usual guessing, such as trying refs/tags/
+// in front of it, is not applied. ok is false if the ref does not exist.
 func (s *Store) Resolve(ctx context.Context, ref string) (id ID, ok bool, err error) {
-	if err := s.checkRef(ctx, ref); err != nil {
+	if err := checkRef(ctx, ref); err != nil {
 		return "", false, err
 	}
-	out, err := s.git(ctx, nil, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	out, err := s.git(ctx, nil, "show-ref", "--verify", "--hash", ref)
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		if strings.Contains(err.Error(), "not a valid ref") {
 			return "", false, nil
 		}
 		return "", false, err
 	}
-	return ID(strings.TrimSpace(string(out))), true, nil
+	id = ID(strings.TrimSpace(string(out)))
+	if err := s.exists(ctx, id, "commit"); err != nil {
+		return "", false, fmt.Errorf("warp: ref %s points to a non-commit %s", ref, id)
+	}
+	return id, true, nil
 }
 
-// Advance moves ref from old to next atomically (git update-ref). An
-// empty old means "create ref; it must not exist yet". If the ref is not
-// at old, or another writer holds it, Advance returns ErrConflict and
-// changes nothing.
+// Advance moves ref from old to next atomically (git update-ref). An empty
+// old means "create ref; it must not exist yet". next must be a commit, and
+// when old is set, next must descend from it: refs only move forward.
+//
+// Errors: ErrConflict if the ref isn't at old or another writer holds its
+// lock (re-read and retry); ErrInvalid if the update can never succeed
+// (bad name, not a commit, not a fast-forward, a name clash with another
+// ref). Nothing changes on error.
 func (s *Store) Advance(ctx context.Context, ref string, old, next ID) error {
-	if err := s.checkRef(ctx, ref); err != nil {
+	if err := checkRef(ctx, ref); err != nil {
 		return err
 	}
+	if err := s.exists(ctx, next, "commit"); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	expected := old
 	if old == "" {
 		z, err := s.zeroID(ctx)
 		if err != nil {
 			return err
 		}
-		old = z
+		expected = z
+	} else {
+		if err := s.exists(ctx, old, "commit"); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		if ok, err := s.IsAncestor(ctx, old, next); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("%w: %s is not a descendant of %s", ErrInvalid, next, old)
+		}
 	}
-	_, err := s.git(ctx, nil, "update-ref", "-m", "warp: advance", ref, string(next), string(old))
-	if err != nil && strings.Contains(err.Error(), "cannot lock ref") {
+	_, err := s.git(ctx, nil, "update-ref", "-m", "warp: advance", ref, string(next), string(expected))
+	if err == nil {
+		return nil
+	}
+	// Classify by looking at the ref, not by parsing the message.
+	cur, exists, rerr := s.Resolve(ctx, ref)
+	switch {
+	case rerr != nil:
+		return err
+	case old == "" && exists, old != "" && cur != old:
 		return fmt.Errorf("%w: %v", ErrConflict, err)
+	case strings.Contains(err.Error(), ".lock': File exists"):
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	default:
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	return err
 }
 
 // IsAncestor reports whether commit a is an ancestor of, or equal to,
 // commit b (git merge-base --is-ancestor).
 func (s *Store) IsAncestor(ctx context.Context, a, b ID) (bool, error) {
+	if err := validID(a); err != nil {
+		return false, err
+	}
+	if err := validID(b); err != nil {
+		return false, err
+	}
 	_, err := s.git(ctx, nil, "merge-base", "--is-ancestor", string(a), string(b))
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() == 1 {
@@ -250,23 +336,25 @@ func (s *Store) IsAncestor(ctx context.Context, a, b ID) (bool, error) {
 	return err == nil, err
 }
 
-// FindByTrailer returns the most recent commit reachable from ref whose
-// trailer key has exactly the given value (git log). ok is false if
-// there is none, including when ref does not exist.
-func (s *Store) FindByTrailer(ctx context.Context, ref, key, value string) (id ID, ok bool, err error) {
-	head, exists, err := s.Resolve(ctx, ref)
-	if err != nil || !exists {
+// FindByTrailer returns the most recent commit reachable from commit from
+// (including from itself) that has a trailer with exactly this key and
+// value, compared case-sensitively and byte for byte (git log).
+func (s *Store) FindByTrailer(ctx context.Context, from ID, key, value string) (id ID, ok bool, err error) {
+	if err := validTrailer(Trailer{Key: key, Value: value}); err != nil {
 		return "", false, err
 	}
-	format := "--format=%H%x00%(trailers:key=" + key + ",valueonly,separator=%x00)%x01"
-	out, err := s.git(ctx, nil, "log", format, string(head))
+	if err := s.exists(ctx, from, "commit"); err != nil {
+		return "", false, err
+	}
+	out, err := s.git(ctx, nil, "log", "--format=%H%x00%(trailers:only,unfold,separator=%x00)%x01", string(from))
 	if err != nil {
 		return "", false, err
 	}
+	want := key + ": " + value
 	for _, rec := range strings.Split(string(out), "\x01") {
-		f := strings.Split(strings.TrimSpace(rec), "\x00")
-		for _, v := range f[1:] {
-			if strings.TrimSpace(v) == value {
+		f := strings.Split(strings.TrimLeft(rec, "\n"), "\x00")
+		for _, t := range f[1:] {
+			if t == want {
 				return ID(f[0]), true, nil
 			}
 		}
@@ -313,26 +401,36 @@ func (s *Store) Parents(ctx context.Context, commit ID) (tree ID, parents []ID, 
 	return ID(f[0]), parents, nil
 }
 
+// CheckRef reports whether ref is a valid full ref name for a store: it
+// starts with refs/ and passes git check-ref-format.
+func CheckRef(ctx context.Context, ref string) error { return checkRef(ctx, ref) }
+
 // === helpers ===============================================================
 
-func validName(n string) error {
-	if n == "" || n == "." || n == ".." || strings.ContainsAny(n, "/\x00") {
-		return fmt.Errorf("warp: invalid tree entry name %q", n)
+var hexID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+func validID(id ID) error {
+	if !hexID.MatchString(string(id)) {
+		return fmt.Errorf("%w: object ID %q", ErrInvalid, id)
 	}
 	return nil
 }
 
-func (s *Store) checkRef(ctx context.Context, ref string) error {
+func checkRef(ctx context.Context, ref string) error {
 	if !strings.HasPrefix(ref, "refs/") {
-		return fmt.Errorf("warp: ref %q must start with refs/", ref)
+		return fmt.Errorf("%w: ref %q must start with refs/", ErrInvalid, ref)
 	}
 	if _, err := gitCmd(ctx, "", nil, []string{"check-ref-format", ref}); err != nil {
-		return fmt.Errorf("warp: invalid ref name %q", ref)
+		return fmt.Errorf("%w: ref name %q", ErrInvalid, ref)
 	}
 	return nil
 }
 
+// exists checks id is a well-formed ID of an object of the given kind.
 func (s *Store) exists(ctx context.Context, id ID, kind Kind) error {
+	if err := validID(id); err != nil {
+		return err
+	}
 	out, err := s.git(ctx, nil, "cat-file", "-t", string(id))
 	if err != nil || strings.TrimSpace(string(out)) != string(kind) {
 		return fmt.Errorf("%w: %s %s", ErrNotFound, kind, id)

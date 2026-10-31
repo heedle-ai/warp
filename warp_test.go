@@ -92,6 +92,9 @@ func TestTree_RoundTripAndValidation(t *testing.T) {
 		{{Name: "..", Kind: warp.KindBlob, ID: x}},
 		{{Name: "d", Kind: warp.KindBlob, ID: x}, {Name: "d", Kind: warp.KindBlob, ID: x}},
 		{{Name: "k", Kind: "commit", ID: x}},
+		{{Name: ".git", Kind: warp.KindBlob, ID: x}},
+		{{Name: ".GIT", Kind: warp.KindBlob, ID: x}},
+		{{Name: "ok", Kind: warp.KindBlob, ID: "HEAD"}},
 	} {
 		if _, err := s.PutTree(ctx, bad); err == nil {
 			t.Errorf("PutTree(%v) succeeded, want error", bad)
@@ -239,18 +242,15 @@ func TestFindByTrailer(t *testing.T) {
 	if err := s.Advance(ctx, "refs/runs", "", head); err != nil {
 		t.Fatal(err)
 	}
-	id, ok, err := s.FindByTrailer(ctx, "refs/runs", "Shuttle-Run", "run-2")
+	id, ok, err := s.FindByTrailer(ctx, head, "Shuttle-Run", "run-2")
 	if err != nil || !ok {
 		t.Fatalf("find run-2: %v %v", ok, err)
 	}
 	if _, ps := must2(t, s.Parents, head); ps[0] != id {
 		t.Errorf("found %s, want head's parent %s", id, ps[0])
 	}
-	if _, ok, _ := s.FindByTrailer(ctx, "refs/runs", "Shuttle-Run", "run-9"); ok {
+	if _, ok, _ := s.FindByTrailer(ctx, head, "Shuttle-Run", "run-9"); ok {
 		t.Error("found a run that was never recorded")
-	}
-	if _, ok, _ := s.FindByTrailer(ctx, "refs/none", "Shuttle-Run", "run-1"); ok {
-		t.Error("found a run on a missing ref")
 	}
 }
 
@@ -271,5 +271,108 @@ func TestOpen_RejectsNonBare(t *testing.T) {
 	}
 	if _, err := warp.Open(ctx, dir); err == nil {
 		t.Error("opened a non-bare repository")
+	}
+}
+
+// === Regression tests from the independent review ==========================
+
+func TestAdvance_OnlyFastForwardToCommits(t *testing.T) {
+	s := newStore(t)
+	const ref = "refs/agents/ff"
+	a := commitOn(t, s, "a")
+	unrelated := commitOn(t, s, "unrelated root")
+	tree := must(s.PutTree(ctx, nil))
+	if err := s.Advance(ctx, ref, "", a); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Advance(ctx, ref, a, unrelated); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("move to an unrelated commit: err = %v, want ErrInvalid", err)
+	}
+	if err := s.Advance(ctx, ref, a, tree); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("move to a tree: err = %v, want ErrInvalid", err)
+	}
+	if err := s.Advance(ctx, "refs/agents/new", "", tree); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("create pointing at a tree: err = %v, want ErrInvalid", err)
+	}
+	if head, ok := must3(t, s, ref); !ok || head != a {
+		t.Errorf("ref = %s %v, want unchanged %s", head, ok, a)
+	}
+}
+
+func TestAdvance_NameClashIsNotAConflict(t *testing.T) {
+	s := newStore(t)
+	c := commitOn(t, s, "c")
+	if err := s.Advance(ctx, "refs/loom/runs", "", c); err != nil {
+		t.Fatal(err)
+	}
+	// refs/loom/runs is a ref, so refs/loom/runs/x can never exist.
+	err := s.Advance(ctx, "refs/loom/runs/x", "", c)
+	if errors.Is(err, warp.ErrConflict) || !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid and not ErrConflict", err)
+	}
+}
+
+func TestResolve_ExactNameNoGuessing(t *testing.T) {
+	s := newStore(t)
+	c := commitOn(t, s, "c")
+	// Only a tag whose name ends in refs/loom/runs exists.
+	gitOut(t, s, "update-ref", "refs/tags/refs/loom/runs", string(c))
+	if id, ok := must3(t, s, "refs/loom/runs"); ok {
+		t.Errorf("Resolve guessed %s", id)
+	}
+	if err := s.Advance(ctx, "refs/loom/runs", "", c); err != nil {
+		t.Errorf("create after a guessable tag: %v", err)
+	}
+}
+
+func TestIDs_RejectRevisionExpressions(t *testing.T) {
+	s := newStore(t)
+	b := must(s.PutBlob(ctx, []byte("hello\n")))
+	tree := must(s.PutTree(ctx, []warp.Entry{{Name: "f", Kind: warp.KindBlob, ID: b}}))
+	c := must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: author}))
+	if err := s.Advance(ctx, "refs/r", "", c); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []warp.ID{"refs/r:f", "ce01362", "HEAD", warp.ID(strings.ToUpper(string(b)))} {
+		if _, err := s.Blob(ctx, id); !errors.Is(err, warp.ErrInvalid) {
+			t.Errorf("Blob(%q) err = %v, want ErrInvalid", id, err)
+		}
+	}
+}
+
+func TestTrailers_ReadBackExactly(t *testing.T) {
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	want := []warp.Trailer{{Key: "K", Value: "v"}, {Key: "K", Value: "v"}, {Key: "Url", Value: "https://x/y?a=b:c"}, {Key: "A-1", Value: "two words"}}
+	c := must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: author, Trailers: want}))
+	if got := must(s.Trailers(ctx, c)); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("trailers = %v, want %v", got, want)
+	}
+	for _, bad := range []warp.Trailer{{"a=b", "c"}, {"#k", "v"}, {"k", ""}, {"k", " padded"}, {"k", "padded "}, {"k y", "v"}, {"k", "two\nlines"}} {
+		if _, err := s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: author, Trailers: []warp.Trailer{bad}}); !errors.Is(err, warp.ErrInvalid) {
+			t.Errorf("trailer %q accepted (err %v)", bad, err)
+		}
+	}
+	if _, err := s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "subject\n\nSneaky: trailer", Author: author}); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("message ending in trailer-like lines accepted (err %v)", err)
+	}
+}
+
+func TestFindByTrailer_ExactMatchOnly(t *testing.T) {
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	c := must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: author,
+		Trailers: []warp.Trailer{{Key: "shuttle-run", Value: "lower"}, {Key: "Shuttle-Run", Value: "abc"}}}))
+	if _, ok, _ := s.FindByTrailer(ctx, c, "Shuttle-Run", "lower"); ok {
+		t.Error("key matched case-insensitively")
+	}
+	if _, ok, _ := s.FindByTrailer(ctx, c, "Shuttle-Run", "ab"); ok {
+		t.Error("value matched as a prefix")
+	}
+	if id, ok, _ := s.FindByTrailer(ctx, c, "Shuttle-Run", "abc"); !ok || id != c {
+		t.Error("exact match not found")
+	}
+	if _, _, err := s.FindByTrailer(ctx, c, "Shuttle-Run,valueonly=false", "abc"); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("injected key: err = %v, want ErrInvalid", err)
 	}
 }
