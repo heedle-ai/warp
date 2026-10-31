@@ -372,6 +372,70 @@ func (s *Store) FindByTrailer(ctx context.Context, from ID, key, value string) (
 	return "", false, nil
 }
 
+// CommitInfo describes one commit, as listed by Log.
+type CommitInfo struct {
+	ID       ID
+	Tree     ID
+	Parents  []ID
+	Subject  string
+	Time     time.Time
+	Trailers []Trailer
+}
+
+// Log lists up to limit commits reachable from commit from, newest first,
+// following first parents (git log --first-parent). limit <= 0 means all.
+func (s *Store) Log(ctx context.Context, from ID, limit int) ([]CommitInfo, error) {
+	if err := s.exists(ctx, from, "commit"); err != nil {
+		return nil, err
+	}
+	args := []string{"log", "--first-parent", "--format=%H%x00%T%x00%P%x00%ct%x00%s%x00%(trailers:only,unfold,separator=%x1f)%x01"}
+	if limit > 0 {
+		args = append(args, "-n", strconv.Itoa(limit))
+	}
+	out, err := s.git(ctx, nil, append(args, string(from))...)
+	if err != nil {
+		return nil, err
+	}
+	var commits []CommitInfo
+	for _, rec := range strings.Split(string(out), "\x01") {
+		rec = strings.TrimLeft(rec, "\n")
+		if rec == "" {
+			continue
+		}
+		f := strings.Split(rec, "\x00")
+		if len(f) != 6 {
+			return nil, fmt.Errorf("warp: unexpected git log output %q", rec)
+		}
+		secs, err := strconv.ParseInt(f[3], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("warp: bad commit time %q", f[3])
+		}
+		c := CommitInfo{ID: ID(f[0]), Tree: ID(f[1]), Subject: f[4], Time: time.Unix(secs, 0).UTC()}
+		for _, p := range strings.Fields(f[2]) {
+			c.Parents = append(c.Parents, ID(p))
+		}
+		for _, t := range strings.Split(f[5], "\x1f") {
+			if k, v, ok := strings.Cut(t, ": "); ok {
+				c.Trailers = append(c.Trailers, Trailer{Key: k, Value: v})
+			}
+		}
+		commits = append(commits, c)
+	}
+	return commits, nil
+}
+
+// Diff returns the unified diff between two commits' trees (git diff),
+// for display. It is plain text, without colour.
+func (s *Store) Diff(ctx context.Context, a, b ID) ([]byte, error) {
+	if err := s.exists(ctx, a, "commit"); err != nil {
+		return nil, err
+	}
+	if err := s.exists(ctx, b, "commit"); err != nil {
+		return nil, err
+	}
+	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", string(a), string(b))
+}
+
 // Trailers returns a commit's trailers in order (git interpret-trailers
 // --parse over the commit message).
 func (s *Store) Trailers(ctx context.Context, commit ID) ([]Trailer, error) {

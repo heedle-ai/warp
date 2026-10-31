@@ -14,6 +14,7 @@ Each guarantee has a test in `warp_test.go`.
 | IDs are full hex names; abbreviations and revision expressions are rejected | `TestIDs_RejectRevisionExpressions` |
 | Trailers read back exactly, duplicates and order included; malformed keys, values and trailer-like messages are rejected | `TestTrailers_ReadBackExactly` |
 | Trailer lookup matches key and value exactly, rejects injected keys, and ignores the same text in the message body | `TestFindByTrailer_ExactMatchOnly`, `TestFindByTrailer_ValueInBodyIsNotATrailer` |
+| `Log` lists history newest first with trailers and times; `Diff` shows exactly the changed lines and rejects revision expressions | `TestLogAndDiff` |
 | Messages with a `---` line (which hides trailers from `git log`) are rejected | `TestCommit_RejectsDashLinesThatHideTrailers` |
 | A ref pointing at a non-commit is `ErrInvalid`, not retried | `TestResolve_RefToNonCommitIsInvalid` |
 

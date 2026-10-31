@@ -405,3 +405,39 @@ func TestFindByTrailer_ValueInBodyIsNotATrailer(t *testing.T) {
 		t.Error("matched text in the body")
 	}
 }
+
+func TestLogAndDiff(t *testing.T) {
+	s := newStore(t)
+	var head warp.ID
+	for i, text := range []string{"one\n", "two\n", "three\n"} {
+		b := must(s.PutBlob(ctx, []byte(text)))
+		tree := must(s.PutTree(ctx, []warp.Entry{{Name: "f", Kind: warp.KindBlob, ID: b}}))
+		var parents []warp.ID
+		if head != "" {
+			parents = []warp.ID{head}
+		}
+		head = must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Parents: parents, Message: fmt.Sprintf("run %d", i),
+			Author:   warp.Signature{Name: "w", Email: "w@x", When: time.Unix(1700000000+int64(i), 0)},
+			Trailers: []warp.Trailer{{Key: "Run", Value: fmt.Sprint(i)}, {Key: "Url", Value: "a: b"}}}))
+	}
+	all := must(s.Log(ctx, head, 0))
+	if len(all) != 3 || all[0].ID != head || all[0].Subject != "run 2" || all[2].Subject != "run 0" {
+		t.Fatalf("log = %+v", all)
+	}
+	if fmt.Sprint(all[0].Trailers) != "[{Run 2} {Url a: b}]" || !all[0].Time.Equal(time.Unix(1700000002, 0)) {
+		t.Errorf("newest = %+v", all[0])
+	}
+	if len(all[0].Parents) != 1 || all[0].Parents[0] != all[1].ID || len(all[2].Parents) != 0 {
+		t.Errorf("parents wrong: %+v", all)
+	}
+	if two := must(s.Log(ctx, head, 2)); len(two) != 2 {
+		t.Errorf("limit 2 returned %d", len(two))
+	}
+	d := string(must(s.Diff(ctx, all[1].ID, all[0].ID)))
+	if !strings.Contains(d, "-two") || !strings.Contains(d, "+three") || !strings.Contains(d, "a/f") {
+		t.Errorf("diff = %q", d)
+	}
+	if _, err := s.Diff(ctx, "HEAD", all[0].ID); !errors.Is(err, warp.ErrInvalid) {
+		t.Errorf("Diff accepted a revision expression: %v", err)
+	}
+}

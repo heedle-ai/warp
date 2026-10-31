@@ -19,7 +19,7 @@ Because the store is a real Git repository, the tools you already know work on i
 | [draft](https://github.com/heedle-ai/draft/wiki) | Language: s-expressions that compile to shuttle plans |
 | [shuttle](https://github.com/heedle-ai/shuttle/wiki) | Durable execution on Temporal |
 | **warp** | Content-addressed store (this repo) |
-| [drawdown](https://github.com/heedle-ai/drawdown/wiki) | Viewing commits, diffs and provenance |
+| [drawdown](https://github.com/heedle-ai/drawdown/wiki) | Web UI: write, run and browse programs and records |
 | [loom](https://github.com/heedle-ai/loom/wiki) | Runs everything together |
 
 ## Pages

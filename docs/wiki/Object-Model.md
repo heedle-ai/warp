@@ -12,6 +12,8 @@ warp's objects are Git's objects. Each warp call is one Git plumbing command, ru
 | `Parents(id)` | `git log -1 --format='%T %P'` | Tree and parents |
 | `Resolve(ref)` | `git show-ref --verify` | Exact name only: Git's usual guessing (such as trying `refs/tags/` in front) isn't applied. `ok == false` if the ref doesn't exist |
 | `Advance(ref, old, new)` | `git merge-base --is-ancestor`, then `git update-ref ref new old` | Compare-and-swap. `old == ""` means create-only. `new` must be a commit descending from `old` |
+| `Log(from, limit)` | `git log --first-parent` | Commits newest first, with subject, time, parents and trailers |
+| `Diff(a, b)` | `git diff --no-color --no-ext-diff` | Unified diff between two commits, for display |
 | `IsAncestor(a, b)` | `git merge-base --is-ancestor` | |
 | `FindByTrailer(from, key, value)` | `git log -F --grep`, then `%(trailers:only,unfold)` | Most recent commit reachable from commit `from` with exactly this trailer: key case-sensitive, value byte for byte |
 | `ValidName(name)`, `CheckRef(ref)` | none, `git check-ref-format` | Validation, so callers can reject bad input early. `ValidName` does no I/O |
