@@ -1,22 +1,21 @@
 # warp
 
-heedle-ai's Merkle object store. In weaving, the warp is the fixed set of threads
-the weft is woven through. Here it is the immutable history that computations
-are recorded against.
+heedle-ai's content-addressed object store: a bare Git repository, driven through the `git` command line.
 
-**Status:** placeholder. No code yet.
+```go
+s, _ := warp.Init(ctx, "store.git")
+blob, _ := s.PutBlob(ctx, []byte("hello\n"))        // git hash-object -w
+tree, _ := s.PutTree(ctx, []warp.Entry{...})          // git mktree
+commit, _ := s.Commit(ctx, warp.CommitSpec{...})      // git commit-tree
+err := s.Advance(ctx, "refs/agents/demo", old, commit) // git update-ref (compare-and-swap)
+```
 
-## Intended model
+warp doesn't reimplement Git. Every operation is a Git plumbing command, so `git log`, `git show`, `git fsck` and `git push` all work on the store.
 
-| Object | Meaning |
-|---|---|
-| Blob | Immutable content: an observation, tool result, prompt, claim |
-| Tree | Map from names to object IDs: an agent's state or workspace |
-| Commit | State root, parents, metadata (plan hash, Temporal workflow and run ID) |
-| Ref | Mutable name for a commit, updated only by compare-and-swap |
+Documentation: **[wiki](https://github.com/heedle-ai/warp/wiki)**
 
-`id(o) = H(type ‖ canonicalEncode(o))`
+Requires Go 1.24+ and `git` on `PATH`.
 
-The first backend will be SQLite for refs plus filesystem-backed objects. All
-store I/O happens inside Temporal activities (see
-[shuttle](https://github.com/heedle-ai/shuttle)), never in workflow code.
+```bash
+go test -race ./...
+```

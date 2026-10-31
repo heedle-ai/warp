@@ -1,7 +1,12 @@
-// Package warp is heedle-ai's content-addressed object store.
+// Package warp is heedle-ai's content-addressed object store: a bare Git
+// repository driven through the git command line.
 //
-// Immutable objects (blobs, trees, commits) are identified by the hash of
-// their type and canonical encoding. Refs are the only mutable state; they
-// name commits and move only by compare-and-swap. Nothing is implemented
-// yet. See README.md for the intended model.
+// Objects (blobs, trees, commits) are written with git's plumbing commands
+// and identified by Git's own object IDs, so equal content always has an
+// equal ID. Refs are the only mutable state and move only by
+// compare-and-swap (git update-ref with an expected old value). Because the
+// store is an ordinary Git repository, git log, git show, git fsck and git
+// push all work on it.
+//
+// warp is called from Temporal activities, never from workflow code.
 package warp

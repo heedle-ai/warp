@@ -1,6 +1,6 @@
 # warp
 
-heedle-ai's content-addressed Merkle object store. Part of heedle-ai:
+heedle-ai's content-addressed object store: a bare Git repository. Part of heedle-ai:
 weft (algebra) → draft (language) → shuttle (execution) → warp (object store) → drawdown (UI);
 loom runs them together.
 
@@ -35,8 +35,11 @@ why the existing tool can't do it.
 
 ## Repo-specific
 
-- Objects are immutable and identified by `H(type ‖ canonicalEncode(o))`.
-  Encoding must be canonical and versioned; changing it is a breaking change.
+- warp is a thin layer over the `git` CLI's plumbing commands (`hash-object`,
+  `mktree`, `commit-tree`, `update-ref`, …). Object IDs and encodings are
+  Git's own; warp never computes a hash or writes an object file itself.
+- Commits must be deterministic: always pass an explicit author time, never
+  "now", so the same inputs give the same commit ID.
 - Refs are the only mutable state and move only by compare-and-swap.
 - Nothing in warp may be called from Temporal workflow code directly; shuttle
   calls it from activities.
