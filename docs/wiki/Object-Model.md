@@ -16,6 +16,9 @@ warp's objects are Git's objects. Each warp call is one Git plumbing command, ru
 | `Diff(a, b)` | `git diff --no-color --no-ext-diff` | Unified diff between two commits, for display |
 | `IsAncestor(a, b)` | `git merge-base --is-ancestor` | |
 | `FindByTrailer(from, key, value)` | `git log -F --grep`, then `%(trailers:only,unfold)` | Most recent commit reachable from commit `from` with exactly this trailer: key case-sensitive, value byte for byte |
+| `MergeBases(a, b)` | `git merge-base --all` | Best common ancestors, sorted: none for unrelated histories, more than one after a criss-cross merge |
+| `MergeTrees(base, ours, theirs)` | `git commit-tree` (three throwaway commits), then `git merge-tree --write-tree` | Git's own three-way merge of two trees. Returns the merged tree and the conflicting paths; each conflicting entry holds Git's conflict markers, so callers must replace it. Needs Git 2.38 or newer. It's Git's merge: files merge line by line, subtrees path by path, renames are followed, and the store's config applies; it's a whole-entry merge only for flat trees of one-line blobs with no deletions (see [Guarantees](Guarantees)) |
+| `Refs(prefix)` | `git for-each-ref` | Refs under `prefix` (such as `refs/loom/`) and their commits, sorted by name |
 | `ValidName(name)`, `CheckRef(ref)` | none, `git check-ref-format` | Validation, so callers can reject bad input early. `ValidName` does no I/O |
 
 ## IDs and errors

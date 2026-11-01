@@ -20,6 +20,7 @@ Because the store is a real Git repository, the tools you already know work on i
 | [weft](https://github.com/heedle-ai/weft/wiki) | Composition algebra |
 | [draft](https://github.com/heedle-ai/draft/wiki) | Language: s-expressions that compile to shuttle plans |
 | [shuttle](https://github.com/heedle-ai/shuttle/wiki) | Durable execution on Temporal |
+| [bobbin](https://github.com/heedle-ai/bobbin/wiki) | A fresh Podman container per agent step |
 | **warp** | Content-addressed store (this repo) |
 | [drawdown](https://github.com/heedle-ai/drawdown/wiki) | Web UI: write, run and browse programs and records |
 | [loom](https://github.com/heedle-ai/loom/wiki) | Runs everything together |
@@ -35,5 +36,5 @@ Because the store is a real Git repository, the tools you already know work on i
 ## Requirements
 
 - Go **1.24** or later
-- `git` on `PATH`. Tested with Git 2.43; uses only long-standing plumbing commands
+- `git` on `PATH`, **2.38 or newer** for `MergeTrees` (`git merge-tree --write-tree`); everything else uses long-standing plumbing commands. Tested with Git 2.43. The Git from Xcode's Command Line Tools on current macOS is new enough; `brew install git` if `git --version` is older
 - Linux (amd64 or arm64), or macOS on Apple Silicon
