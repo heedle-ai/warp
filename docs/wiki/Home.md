@@ -21,6 +21,7 @@ Because the store is a real Git repository, the tools you already know work on i
 | [draft](https://github.com/heedle-ai/draft/wiki) | Language: s-expressions that compile to shuttle plans |
 | [shuttle](https://github.com/heedle-ai/shuttle/wiki) | Durable execution on Temporal |
 | [bobbin](https://github.com/heedle-ai/bobbin/wiki) | A fresh Podman container per agent step |
+| [reed](https://github.com/heedle-ai/reed/wiki) | A fresh browser per browsing step, reaching only the hosts its program names |
 | **warp** | Content-addressed store (this repo) |
 | [drawdown](https://github.com/heedle-ai/drawdown/wiki) | Web UI: write, run and browse programs and records |
 | [loom](https://github.com/heedle-ai/loom/wiki) | Runs everything together |
