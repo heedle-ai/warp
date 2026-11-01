@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ID is a Git object name in full lowercase hexadecimal form: 40 digits for
@@ -191,7 +193,8 @@ func (s *Store) Tree(ctx context.Context, id ID) ([]Entry, error) {
 var trailerKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
 func validTrailer(t Trailer) error {
-	if !trailerKey.MatchString(t.Key) || t.Value == "" || strings.TrimSpace(t.Value) != t.Value || strings.ContainsAny(t.Value, "\r\n") {
+	if !trailerKey.MatchString(t.Key) || t.Value == "" || !cleanText(t.Value, "") ||
+		strings.TrimSpace(t.Value) != t.Value {
 		return fmt.Errorf("%w: trailer %q: %q", ErrInvalid, t.Key, t.Value)
 	}
 	return nil
@@ -210,6 +213,14 @@ func (s *Store) Commit(ctx context.Context, c CommitSpec) (ID, error) {
 		if err := s.exists(ctx, p, "commit"); err != nil {
 			return "", err
 		}
+	}
+	// git log re-encodes bytes that aren't UTF-8, so they wouldn't read
+	// back as written.
+	if !cleanText(c.Message, "\n\t") || !cleanText(c.Author.Name, "") || !cleanText(c.Author.Email, "") {
+		return "", fmt.Errorf("%w: commit text must be valid UTF-8 without control characters", ErrInvalid)
+	}
+	if subject, _, _ := strings.Cut(c.Message, "\n"); strings.TrimSpace(subject) == "" {
+		return "", fmt.Errorf("%w: a commit message needs a non-blank first line", ErrInvalid)
 	}
 	msg := c.Message
 	if !strings.HasSuffix(msg, "\n") {
@@ -436,23 +447,20 @@ func (s *Store) Diff(ctx context.Context, a, b ID) ([]byte, error) {
 	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", string(a), string(b))
 }
 
-// Trailers returns a commit's trailers in order (git interpret-trailers
-// --parse over the commit message).
+// Trailers returns a commit's trailers in order. It reads them exactly as
+// FindByTrailer and Log do (git log's %(trailers)), so the three never
+// disagree.
 func (s *Store) Trailers(ctx context.Context, commit ID) ([]Trailer, error) {
 	if err := s.exists(ctx, commit, "commit"); err != nil {
 		return nil, err
 	}
-	msg, err := s.git(ctx, nil, "log", "-1", "--format=%B", string(commit))
-	if err != nil {
-		return nil, err
-	}
-	out, err := s.git(ctx, msg, "interpret-trailers", "--parse")
+	out, err := s.git(ctx, nil, "log", "-1", "--format=%(trailers:only,unfold,separator=%x00)", string(commit))
 	if err != nil {
 		return nil, err
 	}
 	var ts []Trailer
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if k, v, ok := strings.Cut(line, ": "); ok {
+	for _, t := range strings.Split(strings.TrimRight(string(out), "\n"), "\x00") {
+		if k, v, ok := strings.Cut(t, ": "); ok {
 			ts = append(ts, Trailer{Key: k, Value: v})
 		}
 	}
@@ -480,6 +488,22 @@ func (s *Store) Parents(ctx context.Context, commit ID) (tree ID, parents []ID, 
 func CheckRef(ctx context.Context, ref string) error { return checkRef(ctx, ref) }
 
 // === helpers ===============================================================
+
+// cleanText reports whether s is valid UTF-8 with no control characters
+// other than those in allowed. Git re-encodes invalid UTF-8 on read, can't
+// store NUL, and warp's own parsing of git log output separates fields
+// with control characters, so none may appear in commit text.
+func cleanText(s, allowed string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) && !strings.ContainsRune(allowed, r) {
+			return false
+		}
+	}
+	return true
+}
 
 var hexID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 

@@ -8,7 +8,7 @@ warp's objects are Git's objects. Each warp call is one Git plumbing command, ru
 | `PutTree(entries)` | `git mktree -z` | Any input order; Git sorts. warp first rejects empty, `.`, `..`, `.git`, `/`-containing and duplicate names, because `mktree` would accept some of them and produce a tree `git fsck` flags |
 | `Tree(id)` | `git ls-tree -z` | Entries in Git's order |
 | `Commit(spec)` | `git interpret-trailers`, then `git commit-tree` | Author and committer are both `spec.Author`; GPG signing is off |
-| `Trailers(id)` | `git interpret-trailers --parse` | |
+| `Trailers(id)` | `git log -1 --format=%(trailers:only,unfold)` | The same reader as `FindByTrailer` and `Log`, so they never disagree |
 | `Parents(id)` | `git log -1 --format='%T %P'` | Tree and parents |
 | `Resolve(ref)` | `git show-ref --verify` | Exact name only: Git's usual guessing (such as trying `refs/tags/` in front) isn't applied. `ok == false` if the ref doesn't exist |
 | `Advance(ref, old, new)` | `git merge-base --is-ancestor`, then `git update-ref ref new old` | Compare-and-swap. `old == ""` means create-only. `new` must be a commit descending from `old` |
@@ -53,6 +53,8 @@ Re-read the ref with `Resolve`, rebuild your commit on the new head, and try aga
 Commit metadata, such as the Temporal workflow and run IDs, goes in Git trailers (`Key: Value` lines at the end of the message), the same format as `Signed-off-by:`. Trailers read back exactly as written, in order, duplicates included. To make that possible:
 
 - keys are letters, digits and hyphens, starting with a letter or digit
-- values are non-empty, on one line, with no leading or trailing whitespace
+- values are non-empty, valid UTF-8, without control characters or leading or trailing whitespace
+- messages are valid UTF-8 whose only control characters are newline and tab; author names and emails have none. Git re-encodes invalid UTF-8 when reading it back and can't store NUL, and warp separates fields of `git log` output with control characters
 - a message can't itself end in lines Git would read as trailers; put those in `Trailers`
+- a message starts with a non-blank subject line
 - a message can't contain a line starting with `---`, which Git treats as the end of the message

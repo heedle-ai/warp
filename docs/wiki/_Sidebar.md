@@ -4,6 +4,7 @@
 - [Getting Started](Getting-Started)
 - [Object Model](Object-Model)
 - [Guarantees](Guarantees)
+- [Invariants](Invariants)
 - [Contributing](Contributing)
 
 **heedle-ai**

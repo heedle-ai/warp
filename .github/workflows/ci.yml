@@ -31,3 +31,10 @@ jobs:
       - name: test
         working-directory: warp
         run: go test -race ./...
+      - name: invariants
+        working-directory: warp
+        run: bash .github/invariants.sh
+      - name: fuzz
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: warp
+        run: go test -run '^$' -fuzz FuzzTrailers -fuzztime 30s .

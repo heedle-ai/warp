@@ -7,6 +7,8 @@ err := s.Advance(ctx, "refs/agents/demo", "", commit) // create the ref; fails i
 
 Because the store is a real Git repository, the tools you already know work on it: `git log` to read history, `git show` to inspect an object, `git fsck` to verify integrity, and `git push` to back it up or replicate it.
 
+[[/images/cas.svg|alt=Refs move forward by compare-and-swap: one writer wins, the other rebuilds on the new head]]
+
 ## Why
 
 [shuttle](https://github.com/heedle-ai/shuttle/wiki) records *how* work ran, in Temporal's event history, which has retention limits and size caps. warp records *what the system knows*: permanently, checkable by hash, and portable. [loom](https://github.com/heedle-ai/loom/wiki) ends every run with a warp commit that links back to its Temporal workflow.
@@ -26,7 +28,8 @@ Because the store is a real Git repository, the tools you already know work on i
 
 - [Getting Started](Getting-Started): install, write objects, move a ref
 - [Object Model](Object-Model): objects, IDs, refs, and the Git command behind each call
-- [Guarantees](Guarantees): what warp promises, and how each promise is tested
+- [Guarantees](Guarantees): concurrency, writers, and what warp doesn't do
+- [Invariants](Invariants): every guarantee, the test that guards it, and the mistake it came from
 - [Contributing](Contributing)
 
 ## Requirements
