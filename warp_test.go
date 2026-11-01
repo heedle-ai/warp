@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -439,5 +440,47 @@ func TestLogAndDiff(t *testing.T) {
 	}
 	if _, err := s.Diff(ctx, "HEAD", all[0].ID); !errors.Is(err, warp.ErrInvalid) {
 		t.Errorf("Diff accepted a revision expression: %v", err)
+	}
+}
+
+// TestAdvance_HeldLockIsAConflict: while another writer holds a ref's lock
+// file, Advance returns ErrConflict (retry later) and the ref is unchanged;
+// once the lock is gone, the same Advance succeeds. Guarantees.md documents
+// this for stale locks.
+func TestAdvance_HeldLockIsAConflict(t *testing.T) {
+	s := newStore(t)
+	const ref = "refs/agents/locked"
+	c1 := commitOn(t, s, "one")
+	c2 := commitOn(t, s, "two", c1)
+	must(0, s.Advance(ctx, ref, "", c1))
+	lock := s.Dir() + "/" + ref + ".lock"
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Advance(ctx, ref, c1, c2); !errors.Is(err, warp.ErrConflict) {
+		t.Fatalf("Advance with the lock held: err = %v, want ErrConflict", err)
+	}
+	if head, _ := must3(t, s, ref); head != c1 {
+		t.Fatalf("ref moved to %s while locked", head)
+	}
+	must(0, os.Remove(lock))
+	if err := s.Advance(ctx, ref, c1, c2); err != nil {
+		t.Fatalf("Advance after the lock is gone: %v", err)
+	}
+}
+
+// TestCommit_RejectsControlCharactersInAuthor: author names and emails go
+// into Git's headers, so control characters are refused, never stored.
+func TestCommit_RejectsControlCharactersInAuthor(t *testing.T) {
+	s := newStore(t)
+	tree := must(s.PutTree(ctx, nil))
+	for _, a := range []warp.Signature{
+		{Name: "a\nb", Email: "a@x"}, {Name: "a", Email: "a@x\x00"}, {Name: "a\x1b[31m", Email: "a@x"},
+		{Name: "a\xff", Email: "a@x"},
+	} {
+		a.When = time.Unix(1700000000, 0)
+		if _, err := s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: a}); !errors.Is(err, warp.ErrInvalid) {
+			t.Errorf("author %q <%q>: err = %v, want ErrInvalid", a.Name, a.Email, err)
+		}
 	}
 }

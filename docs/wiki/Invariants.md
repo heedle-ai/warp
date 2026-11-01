@@ -1,4 +1,4 @@
-Every invariant below is guarded by a test or a CI step, and CI checks this page against the code on every push: each test named here must exist, and every `TestLaw_*`, `TestInv_*` and `Fuzz*` test must be listed here. A mistake isn't fixed until it has a row on this page.
+Every invariant below is guarded by a test or a CI step, and CI checks this page against the code on every push with `bash .github/invariants.sh`. Only the **Guarded by** column counts. Each test named there must exist in exactly one package and is run, and the gate fails if it fails or skips; each `ci:NAME` must be a step in `.github/workflows/ci.yml`. Every `TestLaw_*`, `TestInv_*` and `Fuzz*` test must be listed, and no test file may have build tags, which would hide tests from CI. A mistake isn't fixed until it has a row on this page.
 
 [[/images/invariant-loop.svg|alt=From a mistake to a codified invariant: mistake, named invariant, guard, CI gate]]
 
@@ -7,15 +7,15 @@ Every invariant below is guarded by a test or a CI step, and CI checks this page
 | ID | Invariant | Guarded by | Came from |
 |---|---|---|---|
 | WARP-1 | Identity is content: equal content has equal IDs, and they're Git's own | `TestBlob_ContentAddressed` | Design: reuse Git's object model |
-| WARP-2 | warp reimplements nothing: it depends only on Go's standard library and runs the `git` binary | `TestInv_StandardLibraryOnly` | The go-git detour (a reimplementation of Git) |
+| WARP-2 | warp reimplements nothing: it and its tests depend only on Go's standard library and run the `git` binary | `TestInv_StandardLibraryOnly` | The go-git detour (a reimplementation of Git); review 3: test dependencies weren't checked |
 | WARP-3 | The same commit spec always gives the same commit ID | `TestCommit_DeterministicWithTrailers` | Records must be reproducible |
 | WARP-4 | Refs move by compare-and-swap; create-only when there's no old value | `TestAdvance_CompareAndSwap` | Design |
 | WARP-5 | Of writers racing from one head, exactly one wins; the rest get `ErrConflict` | `TestAdvance_ExactlyOneConcurrentWinner` | Design; checked across separate `git` processes |
 | WARP-6 | Refs only move forward, and only to commits | `TestAdvance_OnlyFastForwardToCommits` | Review 1: a ref could move to an unrelated commit or a tree |
-| WARP-7 | Conflicts are decided by re-reading the ref, never by parsing Git's messages; a name clash is `ErrInvalid` | `TestAdvance_NameClashIsNotAConflict` | Review 1: a permanent error was reported as a retryable conflict |
+| WARP-7 | Conflicts are decided by re-reading the ref; a name clash is `ErrInvalid`. The one Git message warp reads (in the C locale) is a held lock, which is `ErrConflict` until the lock is gone | `TestAdvance_NameClashIsNotAConflict`, `TestAdvance_HeldLockIsAConflict` | Review 1: a permanent error was reported as a retryable conflict; review 3: the lock case was claimed but untested |
 | WARP-8 | Ref names are exact: Git never guesses (`refs/tags/…`) | `TestResolve_ExactNameNoGuessing` | Review 1: guessing made a tag shadow a missing ref |
 | WARP-9 | IDs are full hex names; revision expressions are refused | `TestIDs_RejectRevisionExpressions` | Review 1: `refs/r:file` was accepted as an ID |
-| WARP-10 | Commit text reads back exactly, or is refused: trailers keep order and duplicates; messages need a subject and can't contain `---` lines, invalid UTF-8 or control characters | `FuzzTrailers`, `TestTrailers_ReadBackExactly`, `TestCommit_RejectsDashLinesThatHideTrailers`, `ci:fuzz` | Reviews 1 and 2, then four inputs found by `FuzzTrailers` (invalid UTF-8, NUL, a control character splitting `git log` output, a blank subject) |
+| WARP-10 | Commit text reads back exactly, or is refused: trailers keep order and duplicates, and `Log` sees the same subject and trailers; messages need a subject and can't contain `---` lines, invalid UTF-8 or control characters, nor can author names and emails | `FuzzTrailers`, `TestTrailers_ReadBackExactly`, `TestCommit_RejectsDashLinesThatHideTrailers`, `TestCommit_RejectsControlCharactersInAuthor`, `ci:fuzz` | Reviews 1 and 2, then four inputs found by `FuzzTrailers` (invalid UTF-8, NUL, a control character splitting `git log` output, a blank subject); review 3: `Log` and authors weren't checked |
 | WARP-11 | Trailer lookup matches key and value exactly, and ignores the same text in a message body | `TestFindByTrailer_ExactMatchOnly`, `TestFindByTrailer_ValueInBodyIsNotATrailer`, `TestFindByTrailer` | Review 1: lookups matched case-insensitively and could be injected |
 | WARP-12 | A ref pointing at a non-commit is `ErrInvalid`, never retried | `TestResolve_RefToNonCommitIsInvalid` | Review 2 |
 | WARP-13 | Tree names are valid and unique; `.git` is refused | `TestTree_RoundTripAndValidation` | `git mktree` accepts duplicates; review 1 found `.git` |
@@ -23,3 +23,4 @@ Every invariant below is guarded by a test or a CI step, and CI checks this page
 | WARP-15 | Only bare repositories open as stores | `TestOpen_RejectsNonBare` | Design |
 | WARP-16 | `Log` and `Diff` read history exactly and refuse revision expressions | `TestLogAndDiff` | Needed by the UI |
 | WARP-17 | The documented example's output is exact | `Example` | Docs must never claim untested behaviour |
+| WARP-18 | This page is checked strictly against the code: every listed guard exists once and runs without skipping, every `TestLaw_`, `TestInv_` and `Fuzz` test is listed, and no test file has build tags | `ci:invariants` | Review 3: a reviewer satisfied the old gate with a guard named only in prose, a skipped test and a build-tagged test |
