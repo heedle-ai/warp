@@ -131,6 +131,43 @@ func (s *Store) Blob(ctx context.Context, id ID) ([]byte, error) {
 	return s.git(ctx, nil, "cat-file", "blob", string(id))
 }
 
+// Blobs returns the contents of many blobs, in the order of ids, from one
+// git process (git cat-file --batch). Reading N blobs with Blob costs 2N.
+// Like Blob, it returns ErrNotFound if any ID isn't a blob in the store.
+func (s *Store) Blobs(ctx context.Context, ids []ID) ([][]byte, error) {
+	var in bytes.Buffer
+	for _, id := range ids {
+		if err := validID(id); err != nil {
+			return nil, err
+		}
+		in.WriteString(string(id) + "\n")
+	}
+	if len(ids) == 0 {
+		return [][]byte{}, nil
+	}
+	out, err := s.git(ctx, in.Bytes(), "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	res := make([][]byte, 0, len(ids))
+	for _, id := range ids {
+		// Each object is "<id> <type> <size>\n<contents>\n", or
+		// "<id> missing\n".
+		head, rest, ok := bytes.Cut(out, []byte("\n"))
+		f := strings.Fields(string(head))
+		if !ok || len(f) != 3 || f[0] != string(id) || f[1] != string(KindBlob) {
+			return nil, fmt.Errorf("%w: %s %s", ErrNotFound, KindBlob, id)
+		}
+		n, err := strconv.Atoi(f[2])
+		if err != nil || n < 0 || len(rest) < n+1 || rest[n] != '\n' {
+			return nil, fmt.Errorf("warp: unexpected git cat-file --batch output for %s", id)
+		}
+		res = append(res, bytes.Clone(rest[:n]))
+		out = rest[n+1:]
+	}
+	return res, nil
+}
+
 // ValidName reports whether name can be a tree entry: non-empty, not ".",
 // "..", or ".git" in any case, and without "/" or NUL. It does no I/O, so
 // it is safe to call from Temporal workflow code.

@@ -1,10 +1,11 @@
-warp's objects are Git's objects. Each warp call is one Git plumbing command, run with a clean environment: inherited `GIT_*` variables, system and global config, prompts and locale are all ignored, so results don't depend on the machine.
+warp's objects are Git's objects. Each warp call runs the Git plumbing commands below (some first check the object's type with `git cat-file -t`), with a clean environment: inherited `GIT_*` variables, system and global config, prompts and locale are all ignored, so results don't depend on the machine.
 
 | warp call | Git command | Notes |
 |---|---|---|
 | `PutBlob(data)` | `git hash-object -w --stdin` | Returns Git's ID for the content |
 | `HashBlob(data)` | `git hash-object --stdin` | The ID `data` would have, without writing it or needing a store |
 | `Blob(id)` | `git cat-file blob` | `ErrNotFound` if there's no such blob |
+| `Blobs(ids)` | `git cat-file --batch` | Many blobs from one process, in order; `ErrNotFound` if any isn't a blob |
 | `PutTree(entries)` | `git mktree -z` | Any input order; Git sorts. warp first rejects empty, `.`, `..`, `.git`, `/`-containing and duplicate names, because `mktree` would accept some of them and produce a tree `git fsck` flags |
 | `Tree(id)` | `git ls-tree -z` | Entries in Git's order |
 | `Commit(spec)` | `git interpret-trailers`, then `git commit-tree` | Author and committer are both `spec.Author`; GPG signing is off |
