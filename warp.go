@@ -550,6 +550,40 @@ func (s *Store) DiffBlobs(ctx context.Context, a, b ID) ([]byte, error) {
 	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", "--no-textconv", string(a), string(b))
 }
 
+// DiffTrees returns the unified diff between two trees (git diff), for
+// display: every file's change from a to b. An empty a means the empty
+// tree, so every file of b shows as added. It writes nothing to the
+// store, and binary content is reported, never printed. With Git 2.42 or
+// newer, no .gitattributes in the store changes what it shows.
+func (s *Store) DiffTrees(ctx context.Context, a, b ID) ([]byte, error) {
+	if a == "" {
+		// The empty tree's ID, computed without writing it (no -w).
+		id, err := s.id(s.git(ctx, nil, "hash-object", "-t", "tree", "--stdin"))
+		if err != nil {
+			return nil, err
+		}
+		a = id
+	} else if err := s.exists(ctx, a, KindTree); err != nil {
+		return nil, err
+	}
+	if err := s.exists(ctx, b, KindTree); err != nil {
+		return nil, err
+	}
+	args := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", string(a), string(b)}
+	// A bare store reads attributes from its HEAD's tree, so a
+	// .gitattributes there ("* -diff") could hide every file's change.
+	// Git 2.42 and newer read them from the empty tree instead; older
+	// ones still report each hidden file as "Binary files differ".
+	if s.needGit(ctx, 2, 42) == nil {
+		empty, err := s.id(s.git(ctx, nil, "hash-object", "-t", "tree", "--stdin"))
+		if err != nil {
+			return nil, err
+		}
+		args = append([]string{"-c", "attr.tree=" + string(empty)}, args...)
+	}
+	return s.git(ctx, nil, args...)
+}
+
 // Trailers returns a commit's trailers in order. It reads them exactly as
 // FindByTrailer and Log do (git log's %(trailers)), so the three never
 // disagree.

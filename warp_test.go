@@ -511,6 +511,71 @@ func TestInv_DiffBlobsShowsOneFile(t *testing.T) {
 	}
 }
 
+// newStoreFormat makes a store with the given object format.
+func newStoreFormat(t *testing.T, format string) *warp.Store {
+	t.Helper()
+	dir := t.TempDir() + "/store.git"
+	if out, err := exec.Command("git", "init", "-q", "--bare", "--object-format="+format, dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	return must(warp.Init(ctx, dir))
+}
+
+// newGit reports whether git version output is 2.42 or newer.
+func newGit(version string) bool {
+	var M, m int
+	fmt.Sscanf(strings.TrimPrefix(strings.TrimSpace(version), "git version "), "%d.%d", &M, &m)
+	return M > 2 || M == 2 && m >= 42
+}
+
+// TestInv_DiffTreesShowsEveryFile: DiffTrees diffs two trees file by
+// file, or shows every file as added from the empty tree, writes nothing
+// to the store, and refuses anything that isn't a tree ID. (treadle's
+// review of a new skill made a commit just to diff against it.)
+func TestInv_DiffTreesShowsEveryFile(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		s := newStoreFormat(t, format)
+		a := must(s.PutBlob(ctx, []byte("rain\n")))
+		b := must(s.PutBlob(ctx, []byte("sun\n")))
+		t1 := must(s.PutTree(ctx, []warp.Entry{{Name: "f", Kind: warp.KindBlob, ID: a}}))
+		t2 := must(s.PutTree(ctx, []warp.Entry{{Name: "f", Kind: warp.KindBlob, ID: b}, {Name: "g", Kind: warp.KindBlob, ID: a}}))
+		objects := func() string {
+			out, _ := exec.Command("git", "-C", s.Dir(), "count-objects", "-v").Output()
+			return string(out)
+		}
+		before := objects()
+		if d := string(must(s.DiffTrees(ctx, t1, t2))); !strings.Contains(d, "-rain") || !strings.Contains(d, "+sun") || !strings.Contains(d, "b/g") {
+			t.Errorf("%s: diff = %q", format, d)
+		}
+		if d := string(must(s.DiffTrees(ctx, "", t2))); !strings.Contains(d, "+sun") || !strings.Contains(d, "+rain") || strings.Contains(d, "-rain") {
+			t.Errorf("%s: diff from empty = %q", format, d)
+		}
+		if after := objects(); after != before {
+			t.Errorf("%s: DiffTrees wrote objects:\n%s\n%s", format, before, after)
+		}
+		c := must(s.Commit(ctx, warp.CommitSpec{Tree: t1, Message: "m", Author: warp.Signature{Name: "w", Email: "w@x", When: time.Unix(1700000000, 0)}}))
+		// Review 17: a .gitattributes on the store's HEAD hid every
+		// change. With Git 2.42+ it's ignored; older Git still names the
+		// file as binary, never shows nothing.
+		attrs := must(s.PutTree(ctx, []warp.Entry{{Name: ".gitattributes", Kind: warp.KindBlob, ID: must(s.PutBlob(ctx, []byte("* -diff\n")))}}))
+		hc := must(s.Commit(ctx, warp.CommitSpec{Tree: attrs, Message: "attrs", Author: warp.Signature{Name: "w", Email: "w@x", When: time.Unix(1700000000, 0)}}))
+		head := strings.TrimSpace(gitOut(t, s, "symbolic-ref", "HEAD"))
+		must(0, s.Advance(ctx, head, "", hc))
+		d := string(must(s.DiffTrees(ctx, t1, t2)))
+		if v := gitOut(t, s, "version"); newGit(v) && !strings.Contains(d, "+sun") || !newGit(v) && !strings.Contains(d, "+sun") && !strings.Contains(d, "Binary files a/f and b/f differ") {
+			t.Errorf("%s: with HEAD's .gitattributes (%s): %q", format, strings.TrimSpace(v), d)
+		}
+		for _, bad := range []warp.ID{a, c, "HEAD", warp.ID(string(t1) + ":f")} {
+			if _, err := s.DiffTrees(ctx, bad, t2); err == nil {
+				t.Errorf("%s: DiffTrees accepted %q", format, bad)
+			}
+			if _, err := s.DiffTrees(ctx, t1, bad); err == nil {
+				t.Errorf("%s: DiffTrees accepted %q as b", format, bad)
+			}
+		}
+	}
+}
+
 // TestInv_FilesListsATreeInOneProcess: Files lists every blob at any
 // depth with its path and size, leaves out other entries, and runs one
 // git process for the listing however many directories there are;

@@ -17,6 +17,7 @@ warp's objects are Git's objects. Each warp call runs the Git plumbing commands 
 | `Diff(a, b)` | `git diff --no-color --no-ext-diff` | Unified diff between two commits, for display |
 | `Files(tree)` | `git ls-tree -r -l -z` | Every blob in a tree at any depth, with its path and size, in one process |
 | `BlobSize(id)` | `git cat-file -s` | A blob's size, without reading it |
+| `DiffTrees(a, b)` | `git diff --no-color --no-ext-diff --no-textconv` | Unified diff between two trees, or from the empty tree when `a` is empty, for display. Writes nothing; binary content is reported, never printed; with Git 2.42+, attributes come from the empty tree (`-c attr.tree`), so no `.gitattributes` in the store hides a change |
 | `DiffBlobs(a, b)` | `git diff --no-color --no-ext-diff --no-textconv` | Unified diff between two blobs: one file's change between two records, for display. Binary content is reported, never printed |
 | `IsAncestor(a, b)` | `git merge-base --is-ancestor` | |
 | `FindByTrailer(from, key, value)` | `git log -F --grep`, then `%(trailers:only,unfold)` | Most recent commit reachable from commit `from` with exactly this trailer: key case-sensitive, value byte for byte |
