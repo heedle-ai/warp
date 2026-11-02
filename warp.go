@@ -484,6 +484,19 @@ func (s *Store) Diff(ctx context.Context, a, b ID) ([]byte, error) {
 	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", string(a), string(b))
 }
 
+// DiffBlobs returns the unified diff between two blobs (git diff), for
+// display: one file's change between two records. Binary content is
+// reported as "Binary files differ", never printed.
+func (s *Store) DiffBlobs(ctx context.Context, a, b ID) ([]byte, error) {
+	if err := s.exists(ctx, a, KindBlob); err != nil {
+		return nil, err
+	}
+	if err := s.exists(ctx, b, KindBlob); err != nil {
+		return nil, err
+	}
+	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", "--no-textconv", string(a), string(b))
+}
+
 // Trailers returns a commit's trailers in order. It reads them exactly as
 // FindByTrailer and Log do (git log's %(trailers)), so the three never
 // disagree.

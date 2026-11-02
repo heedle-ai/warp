@@ -15,6 +15,7 @@ warp's objects are Git's objects. Each warp call runs the Git plumbing commands 
 | `Advance(ref, old, new)` | `git merge-base --is-ancestor`, then `git update-ref ref new old` | Compare-and-swap. `old == ""` means create-only. `new` must be a commit descending from `old` |
 | `Log(from, limit)` | `git log --first-parent` | Commits newest first, with subject, time, parents and trailers |
 | `Diff(a, b)` | `git diff --no-color --no-ext-diff` | Unified diff between two commits, for display |
+| `DiffBlobs(a, b)` | `git diff --no-color --no-ext-diff --no-textconv` | Unified diff between two blobs: one file's change between two records, for display. Binary content is reported, never printed |
 | `IsAncestor(a, b)` | `git merge-base --is-ancestor` | |
 | `FindByTrailer(from, key, value)` | `git log -F --grep`, then `%(trailers:only,unfold)` | Most recent commit reachable from commit `from` with exactly this trailer: key case-sensitive, value byte for byte |
 | `MergeBases(a, b)` | `git merge-base --all` | Best common ancestors, sorted: none for unrelated histories, more than one after a criss-cross merge |

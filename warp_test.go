@@ -484,3 +484,28 @@ func TestCommit_RejectsControlCharactersInAuthor(t *testing.T) {
 		}
 	}
 }
+
+// TestInv_DiffBlobsShowsOneFile: DiffBlobs diffs exactly two blobs, says
+// "Binary files" rather than printing binary content, and refuses
+// anything that isn't a blob ID (a commit, a tree, a revision expression).
+func TestInv_DiffBlobsShowsOneFile(t *testing.T) {
+	s := newStore(t)
+	a := must(s.PutBlob(ctx, []byte("rain\nMonday\n")))
+	b := must(s.PutBlob(ctx, []byte("sun\nMonday\n")))
+	d := string(must(s.DiffBlobs(ctx, a, b)))
+	if !strings.Contains(d, "-rain") || !strings.Contains(d, "+sun") || !strings.Contains(d, " Monday") {
+		t.Errorf("diff = %q", d)
+	}
+	x := must(s.PutBlob(ctx, []byte{0, 1, 2, 'z'}))
+	y := must(s.PutBlob(ctx, []byte{0, 1, 3, 'z'}))
+	if d := string(must(s.DiffBlobs(ctx, x, y))); !strings.Contains(d, "Binary files") || strings.Contains(d, "z") {
+		t.Errorf("binary diff = %q", d)
+	}
+	tree := must(s.PutTree(ctx, []warp.Entry{{Name: "f", Kind: warp.KindBlob, ID: a}}))
+	c := must(s.Commit(ctx, warp.CommitSpec{Tree: tree, Message: "m", Author: warp.Signature{Name: "w", Email: "w@x", When: time.Unix(1700000000, 0)}}))
+	for _, bad := range []warp.ID{tree, c, "HEAD", warp.ID(string(a) + ":f"), ""} {
+		if _, err := s.DiffBlobs(ctx, bad, b); err == nil {
+			t.Errorf("DiffBlobs accepted %q", bad)
+		}
+	}
+}
