@@ -484,6 +484,59 @@ func (s *Store) Diff(ctx context.Context, a, b ID) ([]byte, error) {
 	return s.git(ctx, nil, "diff", "--no-color", "--no-ext-diff", string(a), string(b))
 }
 
+// File is one blob in a tree, at any depth.
+type File struct {
+	Path string // "/"-separated, relative to the tree
+	ID   ID
+	Size int64
+}
+
+// Files lists every blob in a tree, at any depth, with its size, in Git's
+// order, with one git process however deep the tree is (git ls-tree -r
+// -l). Entries that aren't blobs (submodule commits) are left out.
+func (s *Store) Files(ctx context.Context, tree ID) ([]File, error) {
+	if err := s.exists(ctx, tree, KindTree); err != nil {
+		return nil, err
+	}
+	out, err := s.git(ctx, nil, "ls-tree", "-r", "-l", "-z", string(tree))
+	if err != nil {
+		return nil, err
+	}
+	var files []File
+	for _, rec := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		if rec == "" {
+			continue
+		}
+		meta, path, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 4 {
+			return nil, fmt.Errorf("warp: unexpected ls-tree output %q", rec)
+		}
+		if f[1] != string(KindBlob) {
+			continue
+		}
+		size, err := strconv.ParseInt(f[3], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("warp: unexpected ls-tree size %q", f[3])
+		}
+		files = append(files, File{Path: path, ID: ID(f[2]), Size: size})
+	}
+	return files, nil
+}
+
+// BlobSize returns a blob's size in bytes (git cat-file -s), without
+// reading it.
+func (s *Store) BlobSize(ctx context.Context, id ID) (int64, error) {
+	if err := s.exists(ctx, id, KindBlob); err != nil {
+		return 0, err
+	}
+	out, err := s.git(ctx, nil, "cat-file", "-s", string(id))
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+}
+
 // DiffBlobs returns the unified diff between two blobs (git diff), for
 // display: one file's change between two records. Binary content is
 // reported as "Binary files differ", never printed.

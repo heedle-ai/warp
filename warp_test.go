@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -507,5 +508,68 @@ func TestInv_DiffBlobsShowsOneFile(t *testing.T) {
 		if _, err := s.DiffBlobs(ctx, bad, b); err == nil {
 			t.Errorf("DiffBlobs accepted %q", bad)
 		}
+	}
+}
+
+// TestInv_FilesListsATreeInOneProcess: Files lists every blob at any
+// depth with its path and size, leaves out other entries, and runs one
+// git process for the listing however many directories there are;
+// BlobSize agrees with the content's length. (Review 9: walking a tree
+// cost two processes a directory.)
+func TestInv_FilesListsATreeInOneProcess(t *testing.T) {
+	s := newStore(t)
+	a := must(s.PutBlob(ctx, []byte("hello")))
+	e := must(s.PutBlob(ctx, nil))
+	dir := must(s.PutTree(ctx, []warp.Entry{{Name: "a b", Kind: warp.KindBlob, ID: a}}))
+	for i := 0; i < 30; i++ {
+		dir = must(s.PutTree(ctx, []warp.Entry{{Name: fmt.Sprintf("d%d", i), Kind: warp.KindTree, ID: dir}}))
+	}
+	root := must(s.PutTree(ctx, []warp.Entry{{Name: "deep", Kind: warp.KindTree, ID: dir}, {Name: "two\nlines", Kind: warp.KindBlob, ID: e}}))
+	calls := countGit(t)
+	fs := must(s.Files(ctx, root))
+	if n := calls(); n != 2 { // the tree check, then the listing
+		t.Errorf("Files ran %d git processes, want 2", n)
+	}
+	deep := "deep/" + func() string {
+		var p []string
+		for i := 29; i >= 0; i-- {
+			p = append(p, fmt.Sprintf("d%d", i))
+		}
+		return strings.Join(p, "/")
+	}() + "/a b"
+	want := []warp.File{{Path: deep, ID: a, Size: 5}, {Path: "two\nlines", ID: e, Size: 0}}
+	if fmt.Sprint(fs) != fmt.Sprint(want) {
+		t.Errorf("files %v", fs)
+	}
+	if n, err := s.BlobSize(ctx, a); err != nil || n != 5 {
+		t.Errorf("size %d %v", n, err)
+	}
+	for _, bad := range []warp.ID{root, "HEAD", ""} {
+		if _, err := s.BlobSize(ctx, bad); err == nil {
+			t.Errorf("BlobSize accepted %q", bad)
+		}
+	}
+	if _, err := s.Files(ctx, a); err == nil {
+		t.Error("Files accepted a blob")
+	}
+}
+
+// countGit puts a git on PATH that logs each run before running the real
+// one, and returns how many runs there have been since.
+func countGit(t *testing.T) func() int {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "runs")
+	script := fmt.Sprintf("#!/bin/sh\necho run >> %q\nexec %q \"$@\"\n", log, real)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		b, _ := os.ReadFile(log)
+		return strings.Count(string(b), "run")
 	}
 }
